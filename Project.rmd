@@ -1,0 +1,115 @@
+---
+title: "Project"
+author: "Hankang"
+date: "January 17, 2015"
+output: html_document
+---
+
+##Motivation
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+The aim of this report was to use data from accelerometers placed on the belt, forearm, arm, and dumbell of six participants to predict how well they were doing the exercise in terms of the classification in the data.
+
+##Data Processing
+
+```{r load library and read data, results='hide',warning=FALSE}
+library(caret)
+library(corrplot)
+library(kernlab)
+library(knitr)
+library(randomForest)
+
+if (!file.exists("data")) {
+    dir.create("data")
+    # file URL and destination file
+    fileUrl1 <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    destfile1 <- "./data/pml-training.csv"
+    fileUrl2 <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    destfile2 <- "./data/pml-testing.csv"
+    # download the file and note the time
+    download.file(fileUrl1, destfile = destfile1)
+    download.file(fileUrl2, destfile = destfile2)
+    dateDownloaded <- date()
+}
+data_training <- read.csv("./data/pml-training.csv")
+data_testing <- read.csv("./data/pml-testing.csv")
+```
+
+By briefly looking at the data `head(data_training)`, the variables related to min, max, var, kurtosis, skewness,avg, stddev, amplitude are not belonged to raw data. We can remove them. The first 7 columns are related to test-time, subject names and windows used. Thus, they can be removed as well.
+
+```{r data processing}
+#Test set
+index <- grep('max|min|var|kurtosis|skewness|avg|stddev|amplitude',
+     names(data_testing))
+testing <- as.data.frame(data_testing[,-c(1:7,index)])
+#Training set
+index <- grep('max|min|var|kurtosis|skewness|avg|stddev|amplitude',
+              names(data_training))
+training <- data_training[,-c(1:7,index)]
+```
+
+##Exploratory Data
+
+Plot a correlation matrix of variables
+
+```{r cor plot,fig.align='center'}
+correlMatrix <- cor(training[, -length(training)])
+corrplot(correlMatrix, order = "FPC", method = "circle", type = "lower", tl.cex = 0.8,  tl.col = rgb(0, 0, 0))
+```
+
+The highest correlation is denoted as negative or positive one.
+
+## Modeling
+
+This is a classification problem, regression model is not applied here. I propose 3 models as random forest ("rf"), boosted trees ("gbm") and linear discriminant analysis ("lda") model. These 3 models are bootstraped and cross valided by using `train` function in 'caret' package. Moreover, these 3 models are stacked to build and model by random forest method. `training` data set is subsetted to `sub_train` and `crossval`. The former one is used to train the 3 models. The latter one is used to test these 3 model and help building combined model. `confustionMatrix` function is use to test the accuracy. At last, we select the most accurate model to make prediction on test data set.
+
+```{r models, cache=TRUE}
+#Subset the training again for cross validation
+inTrain <- createDataPartition(y = training$classe, p = 0.7, list = FALSE)
+sub_train <- training[inTrain, ]
+crossval <- training[-inTrain, ]
+# model
+rf_model <- train(sub_train$classe ~ ., data = sub_train,method = "rf",
+                  trControl = trainControl(number = 4))
+gbm_model <- train(classe ~ ., data = sub_train, method = "gbm",verbose = FALSE)
+lda_model <- train(classe ~ ., data = sub_train, method = "lda")
+#make prediction on crossval set and calculate the accuracy
+rf_predict <- predict(rf_model, crossval)
+gbm_predict <- predict(gbm_model, crossval)
+lda_predict <- predict(lda_model, crossval)
+c1 <- confusionMatrix(crossval$classe, rf_predict )
+c2 <- confusionMatrix(crossval$classe, gbm_predict)
+c3 <-confusionMatrix(crossval$classe, lda_predict)
+#combined model
+DF_combined <- data.frame(rf_predict, gbm_predict, lda_predict,
+                          classe = crossval$classe)
+com_model <- train(classe ~ ., data = DF_combined ,method = "rf",
+                  trControl = trainControl(number = 4))
+com_predict <- predict(lda_model, crossval)
+c4 <- confusionMatrix(crossval$classe, com_predict)
+```
+
+##Estimation on validation
+
+The accuracy of these 4 modelling scheme is displayed in the following table
+
+```{r accuracy}
+acc <- c(c1$overall[[1]],c2$overall[[1]],c3$overall[[1]],c4$overall[[1]])
+name <- c("rf","gbm","lda","combined")
+names(acc) <- name
+print(acc)
+```
+
+Random forest model has the best accuracy. Thus, this model is applied to the test set. linear discriminant analysis `lda` has the worst performance on cross validaton. The reason could this system is highly nonlinear and linear model dose not fit into. The combined model is the second to the worst accurate model. In this model, the accuracy is affected by `lda`.
+
+##Conclusion
+
+```{r prediction on test set}
+predictTest <- predict(rf_model, testing)
+names(predictTest) <- testing$problem_id
+predictTest
+```
+
+The model fits the test data and gives the correct answers in the _submission_ part of this project.
+
